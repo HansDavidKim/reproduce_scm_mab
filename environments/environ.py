@@ -187,6 +187,6 @@ class Environ(ABC):
 
 if __name__ == '__main__':
     env = Environ()
-    env.load_graph('chain.json')
+    env.load_graph('confounder.json')
     env.allocate_weight()
     env.show_graph()
