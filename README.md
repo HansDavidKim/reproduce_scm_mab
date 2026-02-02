@@ -48,6 +48,10 @@ Plot cumulative regret curves from the saved CSV results.
 python main.py visualize-result --benchmark chain_2.json
 ```
 
+## 📊 Experimental Results
+
+![Reproduction Results](reproduction.png)
+
 ## 📂 Project Structure
 
 - `causal_engine/`: Graph pruning and POMIS logic.
