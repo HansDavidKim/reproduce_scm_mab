@@ -81,12 +81,14 @@ class Environ(ABC):
                     self.arm_to_set[len(self.arms)] = intervention_set
                     self.arms.append(intervention)
 
-    def get_arm_indices(self, intervention_sets: list = None) -> list:
+    def get_arm_indices(self, intervention_sets: any = None) -> list:
         """Get arm indices for specified intervention sets.
         
         Args:
-            intervention_sets: List of intervention sets (as set or frozenset).
-                               If None, returns all arm indices.
+            intervention_sets: Can be:
+                - None: returns all arm indices.
+                - set/frozenset of strings: e.g., {'X', 'Z'} (single set)
+                - iterable of sets: e.g., [{X}, {Z}] or {frozenset({X}), frozenset({Z})} (POMIS result)
         
         Returns:
             List of arm indices that belong to the specified intervention sets.
@@ -94,8 +96,22 @@ class Environ(ABC):
         if intervention_sets is None:
             return list(range(len(self.arms)))
         
-        # Convert to frozensets for comparison
-        target_sets = {frozenset(s) for s in intervention_sets}
+        # Determine if we are handling a single set of variables or a collection of sets
+        if isinstance(intervention_sets, (set, frozenset)):
+            if not intervention_sets:
+                # Empty set (observational)
+                target_sets = {frozenset()}
+            else:
+                first_elem = next(iter(intervention_sets))
+                if isinstance(first_elem, str):
+                    # Single set of variables: {'X', 'Z'} -> {frozenset({'X', 'Z'})}
+                    target_sets = {frozenset(intervention_sets)}
+                else:
+                    # Collection of sets: {frozenset({'X'}), frozenset({'Z'})}
+                    target_sets = {frozenset(s) for s in intervention_sets}
+        else:
+            # Assume it's an iterable of sets (list, tuple, etc.)
+            target_sets = {frozenset(s) for s in intervention_sets}
         
         return [
             idx for idx, arm_set in self.arm_to_set.items()
@@ -184,6 +200,30 @@ class Environ(ABC):
                 values[node] = np.random.binomial(1, prob)
         
         return values
+
+    def get_optimal_expected_reward(self, n_samples: int = 1000):
+        """Estimate the optimal expected reward among all arms using Monte Carlo sampling.
+        
+        Args:
+            n_samples: Number of samples per arm
+            
+        Returns:
+            The maximum expected reward (float)
+        """
+        self.expected_rewards = {}
+        
+        for arm_idx, intervention in enumerate(self.arms):
+            rewards = []
+            for _ in range(n_samples):
+                sample = self.sample_node_values(interventions=intervention)
+                rewards.append(sample['Y'])
+            self.expected_rewards[arm_idx] = np.mean(rewards)
+        
+        # Identify the optimal arm
+        self.optimal_arm_idx = max(self.expected_rewards, key=self.expected_rewards.get)
+        self.max_expected_reward = self.expected_rewards[self.optimal_arm_idx]
+        
+        return self.max_expected_reward
 
 if __name__ == '__main__':
     env = Environ()

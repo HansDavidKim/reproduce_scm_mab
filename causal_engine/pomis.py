@@ -1,9 +1,10 @@
-import networkx as nx
-from muct import MUCT, IB
-from copy import deepcopy
 import sys
 from pathlib import Path
 sys.path.append(str(Path(__file__).parent.parent))
+
+import networkx as nx
+from causal_engine.muct import MUCT, IB
+from copy import deepcopy
 
 from environments.environ import Environ
 
@@ -59,7 +60,7 @@ def subpomis(graph: nx.DiGraph, order: list, memo: set):
 
 if __name__ == '__main__':
     env = Environ()
-    env.load_graph('chain_3.json')
+    env.load_graph('chain_2.json')
 
     pomis_res = POMIS(env.G)
     print(f"POMIS Result: {pomis_res}")

@@ -47,7 +47,7 @@ class KLUCBBandit(Bandit):
         
         # log(t) + c*log(log(t))
         # Usually c=0 or c=3 is used in practice for exploration tuning
-        num = np.log(self.t)
+        num = np.log(max(self.t, 1))
         if self.c > 0 and self.t > 1:
             num += self.c * np.log(np.log(self.t))
             

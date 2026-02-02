@@ -12,10 +12,11 @@ class UCBBandit(Bandit):
         Calculating upper confidence bound of reward per each arm.
         Theoretical Background - Hoeffding's Inequality
         """
-        try:
-            upper_bound = arm_stats.mean_reward + np.sqrt(np.log(self.t) / (2 * arm_stats.n_pulls))
-        except:
-            upper_bound = np.inf
+        if arm_stats.n_pulls == 0:
+            return np.inf
+            
+        # Use max(self.t, 1) to avoid log(0) at the start
+        upper_bound = arm_stats.mean_reward + np.sqrt(np.log(max(self.t, 1)) / (2 * arm_stats.n_pulls))
 
         return upper_bound
         
