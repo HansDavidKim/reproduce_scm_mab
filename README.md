@@ -6,7 +6,7 @@ Reproduction study of **"Structural Causal Bandits: Where to Intervene?"** (Neur
 
 *   **Causal Inference Engine**: 
     - Implementation of **POMIS** (Possibly Optimal Minimal Intervention Sets) to prune redundant intervention arms.
-    - Graph algorithms: `MUCT` (Maximal Unobserved Confounders' Territory) and `IB` (Intervention Border).
+    - Graph algorithms: `MUCT` (Minimal Unobserved Confounders' Territory) and `IB` (Intervention Border).
 *   **Multi-Armed Bandit Algorithms**:
     - **UCB** (Upper Confidence Bound) with Hoeffding's Inequality.
     - **KL-UCB**: High-performance variant using Kullback-Leibler divergence.
@@ -33,7 +33,7 @@ The engine is controlled via a CLI interface in `main.py`.
 ### 1. Run a Single Experiment
 Evaluate a specific algorithm on a chosen benchmark graph.
 ```bash
-python main.py run-experiment --algorithm kl-ucb --benchmark chain_3.json --T 5000
+python main.py run-experiment --algorithm kl-ucb --benchmark chain_3.json --t 5000
 ```
 
 ### 2. Run Comparative Benchmarks
