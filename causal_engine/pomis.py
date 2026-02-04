@@ -60,7 +60,7 @@ def subpomis(graph: nx.DiGraph, order: list, memo: set):
 
 if __name__ == '__main__':
     env = Environ()
-    env.load_graph('chain_2.json')
+    env.load_graph('chain_4.json')
 
     pomis_res = POMIS(env.G)
     print(f"POMIS Result: {pomis_res}")

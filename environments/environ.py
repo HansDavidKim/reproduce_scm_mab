@@ -138,88 +138,117 @@ class Environ(ABC):
         """Sigmoid activation function."""
         return 1 / (1 + np.exp(-x))
 
-    def allocate_weight(self):
-        """Allocate random weights to each edge using sigmoid transformation.
+    @staticmethod
+    def sigmoid(x):
+        """Sigmoid activation function."""
+        return 1 / (1 + np.exp(-x))
+
+    def _prepare_sampling(self):
+        """Precompute and cache graph structure for fast sampling."""
+        self.topo_nodes = list(nx.topological_sort(self.G))
+        self.node_to_idx = {node: i for i, node in enumerate(self.topo_nodes)}
+        self.num_nodes = len(self.topo_nodes)
         
-        Each edge weight is: sigmoid(randn()) -> value in (0, 1)
-        """
+        # Cache weights and parent indices
+        self.node_metadata = []
+        for node in self.topo_nodes:
+            is_latent = self.G.nodes[node].get('latent', False)
+            parents = list(self.G.predecessors(node))
+            parent_indices = [self.node_to_idx[p] for p in parents]
+            weights = np.array([self.G[p][node]['weight'] for p in parents])
+            
+            self.node_metadata.append({
+                'is_latent': is_latent,
+                'parent_indices': parent_indices,
+                'weights': weights,
+                'name': node
+            })
+
+    def allocate_weight(self):
+        """Allocate random weights to each edge using sigmoid transformation."""
         assert self.G is not None, "Graph is None"
         
         for u, v in self.G.edges():
             raw_weight = np.random.randn()
             weight = self.sigmoid(raw_weight)
             self.G[u][v]['weight'] = weight
-
-    def sample_node_values(self, interventions: dict = None, noise_scale: float = 0.1):
-        """Sample node values following SCM with Bernoulli sampling.
         
-        V ~ Bernoulli(sigmoid(sum(W_parent * parent_value) + U_v))
-        Latent nodes generate continuous values, observed nodes are binary.
+        # Prepare sampling cache after weights are allocated
+        self._prepare_sampling()
+
+    def sample_node_values_vectorized(self, interventions: dict = None, n_samples: int = 1, noise_scale: float = 0.1, noise_matrix: np.ndarray = None):
+        """Sample node values using NumPy vectorization for massive speedup.
         
         Args:
-            interventions: dict of {node_name: fixed_value} for do-interventions
-            noise_scale: scale of the noise term U
-            
+            interventions: dict of {node_name: fixed_value}
+            n_samples: number of samples
+            noise_scale: scale of noise
+            noise_matrix: Pre-generated noise of shape (n_samples, num_nodes). 
+                         If provided, greatly speeds up multi-arm evaluations.
+        
         Returns:
-            dict of {node_name: sampled_value (0 or 1 for observed, float for latent)}
+            NumPy array of shape (n_samples, num_nodes)
         """
-        assert self.G is not None, "Graph is None"
-        
         interventions = interventions or {}
-        values = {}
+        # Shape: (n_samples, num_nodes)
+        values = np.zeros((n_samples, self.num_nodes))
         
-        # Process nodes in topological order (parents before children)
-        for node in nx.topological_sort(self.G):
-            is_latent = self.G.nodes[node].get('latent', False)
+        # Use provided noise or generate new
+        if noise_matrix is None:
+            noise_matrix = np.random.randn(n_samples, self.num_nodes)
+        
+        for i, meta in enumerate(self.node_metadata):
+            node_name = meta['name']
             
-            if is_latent:
-                # Latent node (U): generate continuous value from noise
-                # Cannot be intervened on
-                values[node] = np.random.randn() * noise_scale
-            elif node in interventions:
-                # do(X=x) intervention: fix the value
-                values[node] = interventions[node]
+            if meta['is_latent']:
+                # Latent node (U): continuous noise
+                values[:, i] = noise_matrix[:, i] * noise_scale
+            elif node_name in interventions:
+                # do-intervention: fix value
+                values[:, i] = interventions[node_name]
             else:
-                # Observed node: compute based on parents
-                parents = list(self.G.predecessors(node))
-                
-                if not parents:
-                    # Root node: sample from prior
-                    noise = np.random.randn() * noise_scale
-                    prob = self.sigmoid(noise)
+                # Observed node: sigmoid(sum(W * parent) + noise)
+                node_noise = noise_matrix[:, i] * noise_scale
+                if not meta['parent_indices']:
+                    prob = self.sigmoid(node_noise)
                 else:
-                    # Child node: prob = sigmoid(sum(W * parent) + U)
-                    parent_sum = sum(
-                        self.G[parent][node]['weight'] * values[parent]
-                        for parent in parents
-                    )
-                    noise = np.random.randn() * noise_scale
-                    prob = self.sigmoid(parent_sum + noise)
+                    # Select parent columns and multiply by weights
+                    parent_values = values[:, meta['parent_indices']]
+                    parent_sum = np.dot(parent_values, meta['weights'])
+                    prob = self.sigmoid(parent_sum + node_noise)
                 
-                # Bernoulli sampling: sample 0 or 1 based on probability
-                values[node] = np.random.binomial(1, prob)
+                values[:, i] = np.random.binomial(1, prob)
         
         return values
 
+    def sample_node_values(self, interventions: dict = None, noise_scale: float = 0.1):
+        """Legacy single-sample wrapper for compatibility."""
+        res = self.sample_node_values_vectorized(interventions, 1, noise_scale)
+        return {self.topo_nodes[i]: res[0, i] for i in range(self.num_nodes)}
+
     def get_optimal_expected_reward(self, n_samples: int = 1000):
-        """Estimate the optimal expected reward among all arms using Monte Carlo sampling.
+        """Estimate optimal reward using vectorized Monte Carlo sampling and CRN optimization.
         
         Args:
             n_samples: Number of samples per arm
-            
-        Returns:
-            The maximum expected reward (float)
         """
+        from tqdm import tqdm
         self.expected_rewards = {}
+        y_idx = self.node_to_idx['Y']
         
-        for arm_idx, intervention in enumerate(self.arms):
-            rewards = []
-            for _ in range(n_samples):
-                sample = self.sample_node_values(interventions=intervention)
-                rewards.append(sample['Y'])
-            self.expected_rewards[arm_idx] = np.mean(rewards)
+        # CRN (Common Random Numbers) Optimization:
+        # Pre-generate noise once and reuse across all arms to save billions of random calls
+        # and reduce variance in comparison between arms.
+        noise_matrix = np.random.randn(n_samples, self.num_nodes)
         
-        # Identify the optimal arm
+        for arm_idx, intervention in enumerate(tqdm(self.arms, desc="Calculating Oracle Rewards", leave=False)):
+            samples = self.sample_node_values_vectorized(
+                interventions=intervention, 
+                n_samples=n_samples,
+                noise_matrix=noise_matrix
+            )
+            self.expected_rewards[arm_idx] = np.mean(samples[:, y_idx])
+        
         self.optimal_arm_idx = max(self.expected_rewards, key=self.expected_rewards.get)
         self.max_expected_reward = self.expected_rewards[self.optimal_arm_idx]
         
